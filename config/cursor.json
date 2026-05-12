@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "vane": {
+      "command": "uvx",
+      "args": ["vane-mcp"],
+      "env": {
+        "VANE_BASE_URL": "http://localhost:3000"
+      }
+    }
+  }
+}
