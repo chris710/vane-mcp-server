@@ -76,7 +76,7 @@ class VaneClient:
             "history": history,
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, proxy=None) as client:
             resp = await client.post(
                 f"{self.base_url}/api/search",
                 json=body,
@@ -102,7 +102,7 @@ class VaneClient:
 
     async def health(self) -> dict[str, Any]:
         """Проверить здоровье Vane API."""
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, proxy=None) as client:
             resp = await client.get(f"{self.base_url}/api/search")
         return {
             "status": resp.status_code,
