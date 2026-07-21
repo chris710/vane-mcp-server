@@ -1,8 +1,8 @@
-"""Vane MCP Server — Model Context Protocol сервер для Vane AI Search Engine.
+"""Vane MCP Server — Model Context Protocol server for Vane AI Search Engine.
 
-Подключает Vane как MCP-инструмент к любому MCP-клиенту (Claude Desktop,
-Cursor, OpenCode, Continue, и др.). Предоставляет инструменты веб-поиска,
-глубокого исследования и AI-ответов через Vane + DeepSeek V4 Pro.
+Connects Vane as a set of MCP tools to any MCP client (Claude Desktop,
+Cursor, OpenCode, Continue, etc.). Provides web search, deep research,
+and AI-powered answers through Vane.
 """
 
 __version__ = "1.0.0"

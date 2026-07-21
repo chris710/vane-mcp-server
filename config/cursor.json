@@ -2,9 +2,15 @@
   "mcpServers": {
     "vane": {
       "command": "uvx",
-      "args": ["vane-mcp"],
+      "args": [
+        "vane-mcp"
+      ],
       "env": {
-        "VANE_BASE_URL": "http://localhost:3000"
+        "VANE_BASE_URL": "http://localhost:3000",
+        "VANE_CHAT_PROVIDER_ID": "bb877f6f-a8a4-47e8-8381-fcb3812401a1",
+        "VANE_CHAT_MODEL_KEY": "GLM-5.1",
+        "VANE_EMBEDDING_PROVIDER_ID": "020df018-9b5d-4afb-97bf-2a3330a01e43",
+        "VANE_EMBEDDING_MODEL_KEY": "Qwen/Qwen3-VL-Embedding-2B"
       }
     }
   }

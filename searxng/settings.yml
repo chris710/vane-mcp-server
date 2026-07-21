@@ -1,0 +1,32 @@
+# SearXNG Settings
+# Documentation: https://docs.searxng.org/admin/settings/settings.html
+
+use_default_settings: true
+
+server:
+  secret_key: "CHANGE_THIS_TO_A_RANDOM_STRING"
+  limiter: false
+  image_proxy: true
+  port: 8080
+  bind_address: "0.0.0.0"
+
+hostnames:
+  high_priority:
+    - '(.*\.)?wikipedia.org$'
+
+ui:
+  static_use_hash: true
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: ""
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 15.0
+  max_retries: 3
+  proxies:
+    all://: http://flaresolverr:8191

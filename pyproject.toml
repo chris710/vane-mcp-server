@@ -1,7 +1,7 @@
 [project]
 name = "vane-mcp-server"
 version = "1.0.0"
-description = "MCP Server for Vane AI Search Engine — web search, deep research, and cited answers powered by DeepSeek V4 Pro"
+description = "MCP Server for Vane AI Search Engine — web search, deep research, and cited answers"
 authors = [{ name = "Vane MCP Contributors" }]
 license = { text = "MIT" }
 readme = "README.md"

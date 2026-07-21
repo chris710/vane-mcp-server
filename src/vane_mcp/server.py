@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
 """
-Vane MCP Server — Model Context Protocol сервер для Vane AI Search Engine.
+Vane MCP Server — Model Context Protocol server for Vane AI Search Engine.
 
-Подключает Vane как набор инструментов к любому MCP-клиенту:
+Connects Vane as a set of MCP tools to any MCP client:
 - Claude Desktop, Cursor, OpenCode, Continue, Windsurf, etc.
 
-Архитектура:
+Architecture:
     MCP Client ──(stdio/SSE)──> VaneMCPServer ──(HTTP)──> Vane API (localhost:3000)
-                                                               │
-                                                          SearxNG (localhost:8080)
-                                                               │
-                                                          DeepSeek V4 Pro API
+                                                                │
+                                                           SearxNG (localhost:8080)
+                                                                │
+                                                           OpenAI-compatible LLM API
 
-Инструменты (tools):
-    web_search      — быстрый веб-поиск (speed mode)
-    deep_research   — глубокое исследование (quality mode)
-    balanced_search — сбалансированный поиск (balanced mode)
+All configuration is passed via environment variables from the MCP client config.
 
-Использование:
-    uv run vane-mcp                   # stdio режим (для Claude Desktop, OpenCode)
-    uv run vane-mcp --sse --port 8053 # SSE режим (для удалённых клиентов)
+Tools:
+    web_search      — fast web search (speed mode)
+    deep_research   — in-depth research (quality mode)
+    balanced_search — balanced search (balanced mode)
+    search_news     — news and discussion search (web + social)
 
-Зависимости:
+Usage:
+    uv run vane-mcp                   # stdio mode (for Claude Desktop, OpenCode)
+    uv run vane-mcp --sse --port 8053 # SSE mode (for remote clients)
+
+Dependencies:
     mcp>=1.14.0, httpx>=0.28.0
 """
 
@@ -30,13 +33,13 @@ import sys
 import json
 import logging
 import argparse
+import traceback
 from typing import Optional, Any
-from contextlib import asynccontextmanager
 
 import httpx
 from mcp.server.fastmcp import FastMCP, Context
+from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource, ToolAnnotations
 from mcp.server import Server
-from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
 
 from vane_mcp.client import VaneClient, SearchResult
 from vane_mcp import __version__
@@ -49,44 +52,54 @@ logging.basicConfig(
 logger = logging.getLogger("vane-mcp")
 
 # ── Config ───────────────────────────────────────────────
+# All configuration is read from environment variables.
+# These are set in the MCP client's config file (the "env" section).
+#
+# To find available provider IDs and model keys, run:
+#   curl http://localhost:3000/api/providers
+#
+# Provider IDs are UUIDs (e.g., bb877f6f-a8a4-47e8-8381-fcb3812401a1)
 VANE_BASE_URL = os.getenv("VANE_BASE_URL", "http://localhost:3000")
-CHAT_PROVIDER_ID = os.getenv("VANE_CHAT_PROVIDER_ID", "deepseek")
-CHAT_MODEL_KEY = os.getenv("VANE_CHAT_MODEL_KEY", "deepseek-v4-pro")
-EMBEDDING_PROVIDER_ID = os.getenv(
-    "VANE_EMBEDDING_PROVIDER_ID",
-    "7f6e41e9-10c0-422c-8776-088fff2a9f48",
-)
-EMBEDDING_MODEL_KEY = os.getenv(
-    "VANE_EMBEDDING_MODEL_KEY",
-    "Xenova/all-MiniLM-L6-v2",
-)
+CHAT_PROVIDER_ID = os.getenv("VANE_CHAT_PROVIDER_ID", "")
+CHAT_MODEL_KEY = os.getenv("VANE_CHAT_MODEL_KEY", "")
+EMBEDDING_PROVIDER_ID = os.getenv("VANE_EMBEDDING_PROVIDER_ID", "")
+EMBEDDING_MODEL_KEY = os.getenv("VANE_EMBEDDING_MODEL_KEY", "")
+VANE_API_KEY = os.getenv("VANE_API_KEY", "")
 
 # ── MCP Server ───────────────────────────────────────────
 mcp = FastMCP(
     name="Vane AI Search",
-    instructions="Vane — AI search engine with web search, deep research, and cited answers. Powered by DeepSeek V4 Pro.",
+    instructions="Vane — AI search engine with web search, deep research, and cited answers.",
     dependencies=["httpx>=0.28.0"],
+)
+
+# Reusable annotation objects
+_READ_ONLY_ANNOTATIONS = ToolAnnotations(
+    title="Vane Search Tool",
+    readOnlyHint=True,
+    destructiveHint=False,
 )
 
 
 def get_client() -> VaneClient:
-    """Создать Vane клиент с настройками из окружения."""
+    """Create a Vane client with settings from environment variables."""
     return VaneClient(
         base_url=VANE_BASE_URL,
         chat_provider_id=CHAT_PROVIDER_ID,
         chat_model_key=CHAT_MODEL_KEY,
         embedding_provider_id=EMBEDDING_PROVIDER_ID,
         embedding_model_key=EMBEDDING_MODEL_KEY,
+        api_key=VANE_API_KEY if VANE_API_KEY else None,
     )
 
 
 def _format_sources(sources: list[dict]) -> str:
-    """Форматировать источники для вывода."""
+    """Format sources for output."""
     if not sources:
         return ""
-    lines = ["\n---", "**Источники:**"]
+    lines = ["\n---", "**Sources:**"]
     for i, s in enumerate(sources[:10], 1):
-        title = s.get("metadata", {}).get("title", s.get("title", "Без названия"))
+        title = s.get("metadata", {}).get("title", s.get("title", "Untitled"))
         url = s.get("metadata", {}).get("url", s.get("url", ""))
         if url:
             lines.append(f"{i}. [{title}]({url})")
@@ -95,155 +108,179 @@ def _format_sources(sources: list[dict]) -> str:
     return "\n".join(lines)
 
 
+async def _safe_ctx_info(ctx, message: str) -> None:
+    """Safely call ctx.info(), ignoring errors if context is unavailable."""
+    if ctx is None:
+        return
+    try:
+        await ctx.info(message)
+    except Exception:
+        pass
+
+
+async def _safe_ctx_progress(ctx, progress: float, total: float) -> None:
+    """Safely call ctx.report_progress(), ignoring errors if context is unavailable."""
+    if ctx is None:
+        return
+    try:
+        await ctx.report_progress(progress, total)
+    except Exception:
+        pass
+
+
+def _handle_search_result(result: SearchResult, tool_name: str, query: str) -> str:
+    """Process search result and handle errors uniformly."""
+    if result.message.startswith("Vane API error"):
+        logger.error(
+            f"{tool_name}: API error for '{query[:60]}': {result.message}"
+        )
+        return f"Error: {result.message}\n\nRaw response: {json.dumps(result.raw, indent=2, ensure_ascii=False, default=str)[:500]}"
+
+    output = result.message + _format_sources(result.sources)
+    logger.info(
+        f"{tool_name}: '{query[:60]}' → {len(result.message)} chars, {len(result.sources)} sources"
+    )
+    return output
+
+
 # ── Tools ────────────────────────────────────────────────
 
 
 @mcp.tool(
     name="web_search",
-    annotations={
-        "title": "Веб-поиск через Vane",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-    },
+    annotations=_READ_ONLY_ANNOTATIONS,
 )
 async def web_search(
     query: str,
     ctx: Context = None,
 ) -> str:
-    """Быстрый веб-поиск с AI-ответом (speed mode).
+    """Fast web search with AI answer (speed mode).
 
-    Используй для быстрых фактов, текущих событий, цен, новостей.
-    Возвращает ответ AI со ссылками на источники.
+    Use for quick facts, current events, prices, news.
+    Returns AI answer with source links.
 
     Args:
-        query: Поисковый запрос на естественном языке.
+        query: Natural language search query.
     """
     client = get_client()
+    logger.info(f"web_search called with query: {query[:100]}")
 
-    if ctx:
-        await ctx.info(f"🔍 Поиск: {query[:100]}...")
-        await ctx.report_progress(0.1, 1.0)
+    await _safe_ctx_info(ctx, f"🔍 Search: {query[:100]}...")
+    await _safe_ctx_progress(ctx, 0.1, 1.0)
 
-    result = await client.search(query=query, mode="speed", sources=["web"])
+    try:
+        result = await client.search(query=query, mode="speed", sources=["web"])
+    except Exception as e:
+        logger.error(f"web_search exception: {e!r}\n{traceback.format_exc()}")
+        return f"Search failed: {type(e).__name__}: {e}"
 
-    if ctx:
-        await ctx.report_progress(1.0, 1.0)
+    await _safe_ctx_progress(ctx, 1.0, 1.0)
 
-    output = result.message + _format_sources(result.sources)
-    logger.info(f"web_search: '{query[:60]}' → {len(result.message)} chars, {len(result.sources)} sources")
-    return output
+    return _handle_search_result(result, "web_search", query)
 
 
 @mcp.tool(
     name="deep_research",
-    annotations={
-        "title": "Глубокое исследование через Vane",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-    },
+    annotations=_READ_ONLY_ANNOTATIONS,
 )
 async def deep_research(
     query: str,
     ctx: Context = None,
 ) -> str:
-    """Глубокое исследование с множеством источников (quality mode).
+    """In-depth research with multiple sources (quality mode).
 
-    Используй для сложных вопросов, требующих всестороннего анализа.
-    Просматривает множество источников, даёт развёрнутый ответ.
+    Use for complex questions requiring comprehensive analysis.
+    Examines multiple sources, provides detailed answer.
 
     Args:
-        query: Исследовательский запрос на естественном языке.
+        query: Natural language research query.
     """
     client = get_client()
+    logger.info(f"deep_research called with query: {query[:100]}")
 
-    if ctx:
-        await ctx.info(f"🔬 Глубокое исследование: {query[:100]}...")
-        await ctx.report_progress(0.05, 1.0)
+    await _safe_ctx_info(ctx, f"🔬 Deep research: {query[:100]}...")
+    await _safe_ctx_progress(ctx, 0.05, 1.0)
 
-    result = await client.search(
-        query=query,
-        mode="quality",
-        sources=["web", "academic"],
-    )
+    try:
+        result = await client.search(
+            query=query,
+            mode="quality",
+            sources=["web", "academic"],
+        )
+    except Exception as e:
+        logger.error(f"deep_research exception: {e!r}\n{traceback.format_exc()}")
+        return f"Research failed: {type(e).__name__}: {e}"
 
-    if ctx:
-        await ctx.report_progress(1.0, 1.0)
+    await _safe_ctx_progress(ctx, 1.0, 1.0)
 
-    output = result.message + _format_sources(result.sources)
-    logger.info(f"deep_research: '{query[:60]}' → {len(result.message)} chars, {len(result.sources)} sources")
-    return output
+    return _handle_search_result(result, "deep_research", query)
 
 
 @mcp.tool(
     name="balanced_search",
-    annotations={
-        "title": "Сбалансированный поиск через Vane",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-    },
+    annotations=_READ_ONLY_ANNOTATIONS,
 )
 async def balanced_search(
     query: str,
     ctx: Context = None,
 ) -> str:
-    """Сбалансированный поиск — золотая середина (balanced mode).
+    """Balanced search — the sweet spot (balanced mode).
 
-    Для большинства поисковых запросов. Баланс скорости и глубины.
-    Несколько источников, развёрнутый ответ.
+    For most search queries. Balance of speed and depth.
+    Multiple sources, detailed answer.
 
     Args:
-        query: Поисковый запрос на естественном языке.
+        query: Natural language search query.
     """
     client = get_client()
+    logger.info(f"balanced_search called with query: {query[:100]}")
 
-    if ctx:
-        await ctx.info(f"⚖️ Сбалансированный поиск: {query[:100]}...")
-        await ctx.report_progress(0.1, 1.0)
+    await _safe_ctx_info(ctx, f"⚖️ Balanced search: {query[:100]}...")
+    await _safe_ctx_progress(ctx, 0.1, 1.0)
 
-    result = await client.search(query=query, mode="balanced", sources=["web"])
+    try:
+        result = await client.search(query=query, mode="balanced", sources=["web"])
+    except Exception as e:
+        logger.error(f"balanced_search exception: {e!r}\n{traceback.format_exc()}")
+        return f"Search failed: {type(e).__name__}: {e}"
 
-    if ctx:
-        await ctx.report_progress(1.0, 1.0)
+    await _safe_ctx_progress(ctx, 1.0, 1.0)
 
-    output = result.message + _format_sources(result.sources)
-    logger.info(f"balanced_search: '{query[:60]}' → {len(result.message)} chars, {len(result.sources)} sources")
-    return output
+    return _handle_search_result(result, "balanced_search", query)
 
 
 @mcp.tool(
     name="search_news",
-    annotations={
-        "title": "Поиск новостей через Vane",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-    },
+    annotations=_READ_ONLY_ANNOTATIONS,
 )
 async def search_news(
     query: str,
     ctx: Context = None,
 ) -> str:
-    """Поиск новостей и обсуждений.
+    """Search news and discussions.
 
-    Используй для поиска свежих новостей, трендов, обсуждений в соцсетях.
-    Использует источники web + social.
+    Use for finding fresh news, trends, discussions in social media.
+    Uses web + social sources.
 
     Args:
-        query: Поисковый запрос (тема новости).
+        query: Search query (news topic).
     """
     client = get_client()
+    logger.info(f"search_news called with query: {query[:100]}")
 
-    if ctx:
-        await ctx.info(f"📰 Поиск новостей: {query[:100]}...")
+    await _safe_ctx_info(ctx, f"📰 News search: {query[:100]}...")
 
-    result = await client.search(
-        query=query,
-        mode="speed",
-        sources=["web", "social"],
-    )
+    try:
+        result = await client.search(
+            query=query,
+            mode="speed",
+            sources=["web", "social"],
+        )
+    except Exception as e:
+        logger.error(f"search_news exception: {e!r}\n{traceback.format_exc()}")
+        return f"News search failed: {type(e).__name__}: {e}"
 
-    output = result.message + _format_sources(result.sources)
-    logger.info(f"search_news: '{query[:60]}' → {len(result.message)} chars")
-    return output
+    return _handle_search_result(result, "search_news", query)
 
 
 # ── Resources ────────────────────────────────────────────
@@ -251,7 +288,7 @@ async def search_news(
 
 @mcp.resource("vane://status")
 async def vane_status() -> str:
-    """Статус Vane сервера и подключённых сервисов."""
+    """Status of Vane server and connected services."""
     client = get_client()
     try:
         health = await client.health()
@@ -284,23 +321,23 @@ async def vane_status() -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Vane MCP Server — AI Search Engine через Model Context Protocol",
+        description="Vane MCP Server — AI Search Engine via Model Context Protocol",
     )
     parser.add_argument(
         "--sse",
         action="store_true",
-        help="Запустить в SSE режиме (для удалённых клиентов)",
+        help="Run in SSE mode (for remote clients)",
     )
     parser.add_argument(
         "--port",
         type=int,
         default=8053,
-        help="Порт для SSE режима (по умолчанию: 8053)",
+        help="Port for SSE mode (default: 8053)",
     )
     parser.add_argument(
         "--host",
         default="0.0.0.0",
-        help="Хост для SSE режима (по умолчанию: 0.0.0.0)",
+        help="Host for SSE mode (default: 0.0.0.0)",
     )
     parser.add_argument(
         "--version",

@@ -1,8 +1,8 @@
 """
-Vane API Client — асинхронный клиент для Vane Search API.
+Vane API Client — async HTTP client for Vane Search API.
 
 Vane (https://github.com/ItzCrazyKns/Vane) — AI-powered answering engine.
-Этот клиент предоставляет Python-интерфейс для поискового API Vane.
+This client provides a Python interface for the Vane search API.
 """
 
 import json
@@ -25,17 +25,19 @@ class VaneClient:
     def __init__(
         self,
         base_url: str = "http://localhost:3000",
-        chat_provider_id: str = "deepseek",
-        chat_model_key: str = "deepseek-v4-pro",
-        embedding_provider_id: str = "7f6e41e9-10c0-422c-8776-088fff2a9f48",
-        embedding_model_key: str = "Xenova/all-MiniLM-L6-v2",
-        timeout: float = 90.0,
+        chat_provider_id: str = "openai",
+        chat_model_key: str = "gpt-4o",
+        embedding_provider_id: str = "openai",
+        embedding_model_key: str = "text-embedding-3-small",
+        api_key: Optional[str] = None,
+        timeout: float = 3600.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.chat_provider_id = chat_provider_id
         self.chat_model_key = chat_model_key
         self.embedding_provider_id = embedding_provider_id
         self.embedding_model_key = embedding_model_key
+        self.api_key = api_key
         self.timeout = timeout
 
     async def search(
@@ -45,16 +47,16 @@ class VaneClient:
         sources: Optional[list[str]] = None,
         history: Optional[list[tuple[str, str]]] = None,
     ) -> SearchResult:
-        """Выполнить поисковый запрос через Vane.
+        """Execute a search query through Vane.
 
         Args:
-            query: Поисковый запрос.
-            mode: Режим поиска — 'speed', 'balanced', 'quality'.
-            sources: Источники — ['web'], ['academic'], ['social'], ['web','academic'].
-            history: История диалога в формате [("human","msg"),("assistant","msg"),...].
+            query: Search query.
+            mode: Search mode — 'speed', 'balanced', 'quality'.
+            sources: Sources — ['web'], ['academic'], ['social'], ['web','academic'].
+            history: Dialog history in format [("human","msg"),("assistant","msg"),...].
 
         Returns:
-            SearchResult с ответом и источниками.
+            SearchResult with answer and sources.
         """
         if sources is None:
             sources = ["web"]
@@ -76,11 +78,20 @@ class VaneClient:
             "history": history,
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout, proxy=None) as client:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        # Quality mode (deep research) can take several minutes
+        timeout = self.timeout
+        if mode == "quality":
+            timeout = max(timeout, 3600.0)  # 60 minutes for deep research
+
+        async with httpx.AsyncClient(timeout=timeout, proxy=None) as client:
             resp = await client.post(
                 f"{self.base_url}/api/search",
                 json=body,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
             )
 
         if resp.status_code != 200:
@@ -101,9 +112,16 @@ class VaneClient:
         )
 
     async def health(self) -> dict[str, Any]:
-        """Проверить здоровье Vane API."""
+        """Check Vane API health."""
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         async with httpx.AsyncClient(timeout=10.0, proxy=None) as client:
-            resp = await client.get(f"{self.base_url}/api/search")
+            resp = await client.get(
+                f"{self.base_url}/api/search",
+                headers=headers,
+            )
         return {
             "status": resp.status_code,
             "ok": resp.status_code < 500,

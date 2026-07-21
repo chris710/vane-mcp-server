@@ -2,13 +2,13 @@
 set -e
 
 echo "========================================="
-echo "  Vane MCP Server — установка"
+echo "  Vane MCP Server — Installation"
 echo "========================================="
 echo ""
 
 # Check Python
 if ! command -v python3 &> /dev/null; then
-    echo "❌ Python 3 не найден. Установи Python 3.11+"
+    echo "❌ Python 3 not found. Please install Python 3.11+"
     exit 1
 fi
 
@@ -17,29 +17,29 @@ echo "✅ Python $PY_VERSION"
 
 # Install UV if not present
 if ! command -v uv &> /dev/null; then
-    echo "📦 Устанавливаю uv..."
+    echo "📦 Installing uv..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 
 echo ""
-echo "📦 Устанавливаю зависимости..."
+echo "📦 Installing dependencies..."
 
 # Install the package
 uv pip install -e . 2>/dev/null || pip install -e .
 
 echo ""
 echo "========================================="
-echo "✅ Установка завершена!"
+echo "✅ Installation complete!"
 echo ""
-echo "Запуск MCP сервера:"
-echo "  uv run vane-mcp              # stdio режим"
-echo "  uv run vane-mcp --sse        # SSE режим"
+echo "Starting the MCP server:"
+echo "  uv run vane-mcp              # stdio mode"
+echo "  uv run vane-mcp --sse        # SSE mode"
 echo ""
-echo "Перед запуском убедись что:"
-echo "  1. Vane запущен на localhost:3000"
-echo "  2. SearxNG запущен на localhost:8080"
-echo "  3. Переменные окружения настроены (см. README)"
+echo "Before running, make sure that:"
+echo "  1. Vane is running on localhost:3000"
+echo "  2. SearxNG is running on localhost:8080"
+echo "  3. Environment variables are configured (see README)"
 echo ""
-echo "Подключение к Claude Desktop:"
-echo "  Добавь config/claude_desktop.json в ~/Library/Application Support/Claude/claude_desktop_config.json"
+echo "Connecting to Claude Desktop:"
+echo "  Add config/claude_desktop.json to ~/Library/Application Support/Claude/claude_desktop_config.json"
 echo "========================================="

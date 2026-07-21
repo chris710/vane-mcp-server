@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  # Vane - AI-powered answering engine
+  vane:
+    image: itzcrazykns1337/vane:slim-latest
+    container_name: vane
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - vane-data:/home/vane/data
+    environment:
+      - SEARXNG_API_URL=http://searxng:8080
+    depends_on:
+      - searxng
+    networks:
+      - vane-net
+
+  # SearXNG - Privacy-respecting meta-search engine
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: vane-searxng
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - searxng-data:/var/cache/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+      - FORCE_OWNERSHIP=true
+    depends_on:
+      - valkey
+      - flaresolverr
+    networks:
+      - vane-net
+
+  # Valkey - Redis-compatible cache for bot protection and rate limiting
+  valkey:
+    image: docker.io/valkey/valkey:latest
+    container_name: vane-valkey
+    restart: unless-stopped
+    command: valkey-server --save 30 1 --loglevel warning
+    volumes:
+      - valkey-data:/data
+    networks:
+      - vane-net
+
+  # FlareSolverr - Proxy server to bypass Cloudflare protection
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: vane-flaresolverr
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=info
+      - LOG_HTML=false
+      - CAPTCHA_SOLVER=none
+      - TZ=UTC
+    networks:
+      - vane-net
+
+volumes:
+  vane-data:
+  searxng-data:
+  valkey-data:
+
+networks:
+  vane-net:
+    driver: bridge
