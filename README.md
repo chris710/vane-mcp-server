@@ -16,30 +16,20 @@ Claude Desktop, Cursor, OpenCode, Continue, Windsurf, and others.
 ## 🏗️ Architecture
 
 ```
-┌─────────────────┐     MCP (stdio/SSE)     ┌──────────────────┐
-│  MCP Client     │ ◄──────────────────────► │  Vane MCP Server │
-│  (Claude,       │                          │  (Python/FastMCP)│
-│   Cursor,       │                          └────────┬─────────┘
-│   OpenCode...)  │                                   │ HTTP
-└─────────────────┘                          ┌────────▼─────────┐
-                                              │  Vane API        │
-                                              │  (VANE_BASE_URL) │
-                                              └────────┬─────────┘
-                                                       │
-                                              ┌────────▼─────────┐
-                                              │  SearxNG         │
-                                              │  (localhost:8080)│
-                                              └────────┬─────────┘
-                                                       │
-                                              ┌────────▼─────────┐
-                                              │  FlareSolverr    │
-                                              │  (localhost:8191)│
-                                              └────────┬─────────┘
-                                                       │
-                                              ┌────────▼─────────┐
-                                              │  OpenAI-compatible│
-                                              │  LLM API          │
-                                              └──────────────────┘
+MCP Client (Claude, Cursor, etc.)
+    │ MCP (stdio/SSE)
+    ▼
+Vane MCP Server (Python/FastMCP)
+    │ HTTP
+    ▼
+Vane API (VANE_BASE_URL)
+    │
+    ├──► SearxNG (localhost:8080) ──► FlareSolverr (localhost:8191)
+    │                                    │
+    │                                    ▼
+    │                            Cloudflare-protected sites
+    │
+    └──► OpenAI-compatible LLM API
 ```
 
 ## 📋 Requirements
